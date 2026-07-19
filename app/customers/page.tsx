@@ -60,15 +60,15 @@ export default function CustomersPage() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Principal Carriers</h1>
+        <h1 className="text-2xl font-bold">Customers</h1>
         <button onClick={startAdd} className="bg-yellow-500 hover:bg-yellow-600 text-black font-semibold px-4 py-2 rounded">
-          + Add Carrier
+          + Add Customer
         </button>
       </div>
 
       {isOpen && (
         <div className="bg-white rounded-lg shadow p-5 mb-6">
-          <h2 className="font-semibold mb-4">{editingId ? 'Edit Carrier' : 'New Carrier'}</h2>
+          <h2 className="font-semibold mb-4">{editingId ? 'Edit Customer' : 'New Customer'}</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="label">Company Name *</label>
@@ -97,7 +97,7 @@ export default function CustomersPage() {
           </div>
           <div className="flex gap-2 mt-4">
             <button onClick={save} disabled={saving} className="bg-yellow-500 hover:bg-yellow-600 text-black px-5 py-2 rounded font-semibold">
-              {saving ? 'Saving...' : editingId ? 'Save Changes' : 'Add Carrier'}
+              {saving ? 'Saving...' : editingId ? 'Save Changes' : 'Add Customer'}
             </button>
             <button onClick={cancel} className="border border-gray-300 px-4 py-2 rounded">Cancel</button>
           </div>
@@ -130,7 +130,7 @@ export default function CustomersPage() {
             ))}
           </tbody>
         </table>
-        {customers.length === 0 && <p className="p-6 text-gray-500 text-sm">No carriers yet. Add your first one.</p>}
+        {customers.length === 0 && <p className="p-6 text-gray-500 text-sm">No customers yet. Add your first one.</p>}
       </div>
     </div>
   )

@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 
 const MATERIALS = ['Dirt', 'Gravel', 'Asphalt', 'Concrete', 'Mix Material']
@@ -25,11 +25,53 @@ export default function NewBolPage() {
   const [scanning, setScanning] = useState(false)
   const [bolPhoto, setBolPhoto] = useState<File | null>(null)
   const [bolPhotoPreview, setBolPhotoPreview] = useState<string | null>(null)
-  const [carriers, setCarriers] = useState<any[]>([])
+  const [customers, setCustomers] = useState<any[]>([])
+  const [showPicker, setShowPicker] = useState(false)
+  const [pickerSearch, setPickerSearch] = useState('')
+  const [showNewCustomer, setShowNewCustomer] = useState(false)
+  const [newCustomerName, setNewCustomerName] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    supabase.from('customers').select('id,name').order('name').then(({ data }) => setCarriers(data || []))
+    supabase.from('customers').select('id,name,phone').order('name').then(({ data }) => setCustomers(data || []))
   }, [])
+
+  async function importFromContacts() {
+    try {
+      if (!('contacts' in navigator)) { alert('Address book not supported on this device'); return }
+      const contacts = await (navigator as any).contacts.select(['name', 'tel'], { multiple: false })
+      if (!contacts.length) return
+      const c = contacts[0]
+      const name = c.name?.[0] || ''
+      const phone = c.tel?.[0] || ''
+      setNewCustomerName(name)
+      set('principal_carrier_name', '__other__')
+      set('custom_carrier', name)
+      // Also save to customers table
+      if (name) {
+        const { data } = await supabase.from('customers').insert({ name, phone }).select('id,name,phone').single()
+        if (data) {
+          setCustomers(prev => [...prev, data].sort((a,b) => a.name.localeCompare(b.name)))
+          set('principal_carrier_name', name)
+          set('custom_carrier', '')
+        }
+      }
+      setShowPicker(false)
+    } catch (e) {}
+  }
+
+  async function createNewCustomer() {
+    if (!newCustomerName.trim()) return
+    const { data } = await supabase.from('customers').insert({ name: newCustomerName.trim() }).select('id,name,phone').single()
+    if (data) {
+      setCustomers(prev => [...prev, data].sort((a,b) => a.name.localeCompare(b.name)))
+      set('principal_carrier_name', data.name)
+      set('custom_carrier', '')
+    }
+    setNewCustomerName('')
+    setShowNewCustomer(false)
+    setShowPicker(false)
+  }
 
   function set(key: string, val: string) {
     setForm((f: any) => ({ ...f, [key]: val }))
@@ -180,15 +222,64 @@ export default function NewBolPage() {
 
         <div>
           <label className="label">Customer <span className="text-gray-400 font-normal text-xs">principal carrier</span></label>
-          <select className="input" value={form.principal_carrier_name} onChange={(e) => set('principal_carrier_name', e.target.value)}>
-            <option value="">— Select carrier —</option>
-            {carriers.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
-            <option value="__other__">Other (type below)</option>
-          </select>
-          {form.principal_carrier_name === '__other__' && (
-            <input className="input mt-2" placeholder="Type carrier name" value={form.custom_carrier} onChange={(e) => set('custom_carrier', e.target.value)} />
-          )}
+          <button type="button" onClick={() => { setShowPicker(true); setPickerSearch(''); setTimeout(() => searchRef.current?.focus(), 100) }}
+            className="input text-left w-full flex items-center justify-between">
+            <span className={carrierName ? 'text-gray-900' : 'text-gray-400'}>{carrierName || '— Select customer —'}</span>
+            <span className="text-gray-400 text-xs">▼</span>
+          </button>
         </div>
+
+        {/* Customer Picker Modal */}
+        {showPicker && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center" onClick={() => setShowPicker(false)}>
+            <div className="bg-white w-full max-w-lg rounded-t-2xl flex flex-col" style={{maxHeight:'85vh'}} onClick={e => e.stopPropagation()}>
+              <div className="flex justify-center pt-3 pb-1"><div className="w-10 h-1 bg-gray-300 rounded-full" /></div>
+              <div className="flex items-center justify-between px-5 py-3">
+                <h2 className="font-bold text-base">Select Customer</h2>
+                <button onClick={() => setShowPicker(false)} className="text-gray-400 text-sm">Cancel</button>
+              </div>
+              {/* Search */}
+              <div className="px-4 pb-3">
+                <input ref={searchRef} className="w-full bg-gray-100 rounded-xl px-4 py-2.5 text-sm outline-none" placeholder="Search customers..."
+                  value={pickerSearch} onChange={e => setPickerSearch(e.target.value)} />
+              </div>
+              {/* List */}
+              <div className="overflow-y-auto flex-1 divide-y divide-gray-100">
+                {customers.filter(c => c.name.toLowerCase().includes(pickerSearch.toLowerCase())).map(c => (
+                  <button key={c.id} type="button" onClick={() => { set('principal_carrier_name', c.name); set('custom_carrier', ''); setShowPicker(false) }}
+                    className="w-full text-left px-5 py-4 hover:bg-gray-50 active:bg-gray-100 flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-gray-900">{c.name}</p>
+                      {c.phone && <p className="text-xs text-gray-400">{c.phone}</p>}
+                    </div>
+                    {carrierName === c.name && <span className="text-green-600 text-lg">✓</span>}
+                  </button>
+                ))}
+                {customers.filter(c => c.name.toLowerCase().includes(pickerSearch.toLowerCase())).length === 0 && (
+                  <p className="text-center text-gray-400 py-6 text-sm">No customers found</p>
+                )}
+              </div>
+              {/* Actions */}
+              {!showNewCustomer ? (
+                <div className="border-t divide-y divide-gray-100">
+                  <button type="button" onClick={() => setShowNewCustomer(true)}
+                    className="w-full py-4 text-center text-green-600 font-semibold text-base">Create New Customer</button>
+                  <button type="button" onClick={importFromContacts}
+                    className="w-full py-4 text-center text-green-600 font-semibold text-base">Import From Address Book</button>
+                </div>
+              ) : (
+                <div className="border-t px-4 py-4 space-y-3">
+                  <input className="input" placeholder="Customer name" value={newCustomerName} onChange={e => setNewCustomerName(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && createNewCustomer()} autoFocus />
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setShowNewCustomer(false)} className="flex-1 border border-gray-300 rounded py-2 text-sm">Cancel</button>
+                    <button type="button" onClick={createNewCustomer} className="flex-1 bg-yellow-500 rounded py-2 text-sm font-semibold">Save</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         <div>
           <label className="label">Shipper</label>
