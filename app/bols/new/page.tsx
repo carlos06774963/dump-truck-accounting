@@ -9,6 +9,7 @@ const defaultForm = {
   date: new Date().toISOString().split('T')[0],
   truck_no: '1',
   principal_carrier_name: '',
+  custom_carrier: '',
   shipper: '',
   shipper_address: '',
   material: 'Gravel',
@@ -41,6 +42,7 @@ export default function NewBolPage() {
   const commission = total * (commissionPct / 100)
   const net = total - commission
   const material = form.material === 'Other' ? form.custom_material : form.material
+  const carrierName = form.principal_carrier_name === '__other__' ? form.custom_carrier : form.principal_carrier_name
 
   function toIsoDate(val: string): string {
     if (!val) return ''
@@ -104,7 +106,7 @@ export default function NewBolPage() {
         bill_no: form.bill_no,
         date: form.date,
         truck_no: form.truck_no,
-        principal_carrier_name: form.principal_carrier_name,
+        principal_carrier_name: carrierName,
         underlying_carrier: 'Precision Care',
         shipper: form.shipper,
         shipper_address: form.shipper_address,
@@ -184,7 +186,7 @@ export default function NewBolPage() {
             <option value="__other__">Other (type below)</option>
           </select>
           {form.principal_carrier_name === '__other__' && (
-            <input className="input mt-2" placeholder="Type carrier name" onChange={(e) => set('principal_carrier_name', e.target.value)} />
+            <input className="input mt-2" placeholder="Type carrier name" value={form.custom_carrier} onChange={(e) => set('custom_carrier', e.target.value)} />
           )}
         </div>
 
