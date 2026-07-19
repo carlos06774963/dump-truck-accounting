@@ -1,95 +1,89 @@
 'use client'
-import { useState, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import { useRouter } from 'next/navigation'
 
-const emptyLoad = () => ({
-  row_number: 1,
-  tag_no: '',
-  weight: '',
-  commodity: '',
-  loading_arrive: '',
-  loading_depart: '',
-  unloading_arrive: '',
-  unloading_depart: '',
-  standby_time: '',
-  breakdown_reason: '',
-})
+const MATERIALS = ['Dirt', 'Gravel', 'Asphalt', 'Concrete', 'Mix Material']
 
 const defaultForm = {
   bill_no: '',
-  date: new Date().toLocaleDateString('en-US'),
+  date: new Date().toISOString().split('T')[0],
+  truck_no: '1',
   principal_carrier_name: '',
-  underlying_carrier: 'Precision Care',
-  underlying_address: '',
-  underlying_phone: '',
-  job_no: '',
-  broker_no: '',
-  truck_no: '',
-  trailer_no: '',
-  ca_no: '',
   shipper: '',
   shipper_address: '',
-  shipper_city_state_zip: '',
-  receiver: '',
-  receiver_address: '',
-  receiver_city_state_zip: '',
-  point_of_origin: '',
-  point_of_destination: '',
-  equipment_type: '',
-  billing_method: 'PER LOAD',
+  material: 'Gravel',
+  custom_material: '',
+  num_loads: '1',
   rate: '',
-  total_charges: '',
-  notes: '',
-  status: 'draft',
+  commission_pct: '8',
 }
 
 export default function NewBolPage() {
-  const router = useRouter()
   const [form, setForm] = useState<any>(defaultForm)
-  const [loads, setLoads] = useState([{ ...emptyLoad(), row_number: 1 }])
-  const [scanning, setScanning] = useState(false)
   const [saving, setSaving] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
+  const [scanning, setScanning] = useState(false)
+  const [bolPhoto, setBolPhoto] = useState<File | null>(null)
+  const [bolPhotoPreview, setBolPhotoPreview] = useState<string | null>(null)
+  const [carriers, setCarriers] = useState<any[]>([])
 
-  function setField(key: string, value: any) {
-    setForm((f: any) => ({ ...f, [key]: value }))
+  useEffect(() => {
+    supabase.from('customers').select('id,name').order('name').then(({ data }) => setCarriers(data || []))
+  }, [])
+
+  function set(key: string, val: string) {
+    setForm((f: any) => ({ ...f, [key]: val }))
   }
 
-  function setLoad(i: number, key: string, value: string) {
-    setLoads((ls) => ls.map((l, idx) => (idx === i ? { ...l, [key]: value } : l)))
-  }
-
-  function addLoad() {
-    setLoads((ls) => [...ls, { ...emptyLoad(), row_number: ls.length + 1 }])
-  }
-
-  function removeLoad(i: number) {
-    setLoads((ls) => ls.filter((_, idx) => idx !== i))
-  }
+  const numLoads = parseFloat(form.num_loads) || 0
+  const rate = parseFloat(form.rate) || 0
+  const total = numLoads * rate
+  const commissionPct = parseFloat(form.commission_pct) || 0
+  const commission = total * (commissionPct / 100)
+  const net = total - commission
+  const material = form.material === 'Other' ? form.custom_material : form.material
 
   async function handleScan(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
     setScanning(true)
     try {
-      const { compressImageToBase64 } = await import('@/lib/imageToJpeg')
-      const imageBase64 = await compressImageToBase64(file)
+      const { convertToJpeg } = await import('@/lib/imageToJpeg')
+      const jpeg = await convertToJpeg(file)
+      const path = 'bol-' + Date.now() + '.jpg'
+      const { error: upErr } = await supabase.storage.from('photoscanning').upload(path, jpeg, { contentType: 'image/jpeg', upsert: true })
+      if (upErr) { alert('Upload failed: ' + upErr.message); setScanning(false); return }
+      const { data: urlData } = supabase.storage.from('photoscanning').getPublicUrl(path)
       const res = await fetch('/api/scan-bol', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64 }),
+        body: JSON.stringify({ imageUrl: urlData.publicUrl }),
       })
       const data = await res.json()
+      supabase.storage.from('photoscanning').remove([path])
       if (data.error) { alert('Scan failed: ' + data.error); setScanning(false); return }
-      const { loads: scannedLoads, ...rest } = data
-      setForm((f: any) => ({ ...f, ...rest }))
-      if (scannedLoads?.length) setLoads(scannedLoads)
+      setForm((f: any) => ({
+        ...f,
+        bill_no: data.bill_no || f.bill_no,
+        date: data.date || f.date,
+        truck_no: data.truck_no || f.truck_no,
+        principal_carrier_name: data.principal_carrier_name || f.principal_carrier_name,
+        shipper: data.shipper || f.shipper,
+        shipper_address: data.shipper_address || f.shipper_address,
+        rate: data.rate ? String(data.rate) : f.rate,
+        num_loads: data.loads?.length ? String(data.loads.length) : f.num_loads,
+      }))
       setScanning(false)
-    } catch {
+    } catch (e) {
       setScanning(false)
       alert('Failed to scan image.')
     }
+  }
+
+  function handleBolPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBolPhoto(file)
+    setBolPhotoPreview(URL.createObjectURL(file))
   }
 
   async function handleSave(status: string) {
@@ -97,212 +91,182 @@ export default function NewBolPage() {
     const { data: bol, error } = await supabase
       .from('bills_of_lading')
       .insert({
-        ...form,
+        bill_no: form.bill_no,
+        date: form.date,
+        truck_no: form.truck_no,
+        principal_carrier_name: form.principal_carrier_name,
+        underlying_carrier: 'Precision Care',
+        shipper: form.shipper,
+        shipper_address: form.shipper_address,
+        billing_method: 'PER LOAD',
+        rate: rate,
+        total_charges: total,
+        notes: `Material: ${material} | Commission: ${commissionPct}% ($${commission.toFixed(2)}) | Net: $${net.toFixed(2)}${bolPhoto ? ' | has_photo:true' : ''}`,
         status,
-        rate: parseFloat(form.rate) || 0,
-        total_charges: parseFloat(form.total_charges) || 0,
       })
       .select()
       .single()
 
     if (error) { alert('Error: ' + error.message); setSaving(false); return }
 
-    const loadRows = loads
-      .filter((l) => l.commodity || l.weight || l.tag_no)
-      .map((l, i) => ({ ...l, bol_id: bol.id, row_number: i + 1 }))
+    const loadRows = Array.from({ length: numLoads }, (_, i) => ({
+      bol_id: bol.id,
+      row_number: i + 1,
+      commodity: material,
+      weight: '',
+      tag_no: '',
+    }))
+    if (loadRows.length) await supabase.from('bol_loads').insert(loadRows)
 
-    if (loadRows.length) {
-      await supabase.from('bol_loads').insert(loadRows)
+    if (bolPhoto) {
+      const path = 'bol-doc-' + bol.id + '.jpg'
+      await supabase.storage.from('photoscanning').upload(path, bolPhoto, { upsert: true })
     }
 
-    router.push(`/bols/${bol.id}`)
+    window.location.href = '/bols/' + bol.id
   }
 
   return (
-    <div className="max-w-4xl">
+    <div className="max-w-lg mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">New Bill of Lading</h1>
-        <div className="flex gap-2">
+        <h1 className="text-2xl font-bold">New Ticket</h1>
+        <div>
           <button
-            onClick={() => fileRef.current?.click()}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-medium flex items-center gap-2"
+            onClick={() => document.getElementById('scan-input')?.click()}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-medium"
             disabled={scanning}
           >
-            {scanning ? 'Scanning...' : '📷 Scan Photo'}
+            {scanning ? 'Scanning...' : '📷 Scan'}
           </button>
-          <input ref={fileRef} type="file" accept="image/jpeg,image/png" capture="environment" className="hidden" onChange={handleScan} />
+          <input id="scan-input" type="file" accept="image/*" className="hidden" onChange={handleScan} />
         </div>
       </div>
 
       {scanning && (
-        <div className="bg-blue-50 border border-blue-200 rounded p-4 mb-4 text-blue-700 text-sm">
-          Reading your bill of lading... this takes about 10 seconds.
+        <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-4 text-blue-700 text-sm">
+          Reading ticket... about 15 seconds.
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow p-6 space-y-6">
-        {/* Header */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="bg-white rounded-lg shadow p-5 space-y-4">
+
+        <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="label">Bill No.</label>
-            <input className="input" value={form.bill_no} onChange={(e) => setField('bill_no', e.target.value)} />
+            <label className="label">Ticket #</label>
+            <input className="input" value={form.bill_no} onChange={(e) => set('bill_no', e.target.value)} placeholder="e.g. 10452" />
           </div>
           <div>
             <label className="label">Date</label>
-            <input className="input" value={form.date} onChange={(e) => setField('date', e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Job #</label>
-            <input className="input" value={form.job_no} onChange={(e) => setField('job_no', e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Truck #</label>
-            <input className="input" value={form.truck_no} onChange={(e) => setField('truck_no', e.target.value)} />
+            <input type="date" className="input" value={form.date} onChange={(e) => set('date', e.target.value)} />
           </div>
         </div>
 
-        {/* Carriers */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Principal Carrier (Customer)</label>
-            <input className="input font-medium" value={form.principal_carrier_name} onChange={(e) => setField('principal_carrier_name', e.target.value)} placeholder="Who you bill to" />
-          </div>
-          <div>
-            <label className="label">Underlying Carrier</label>
-            <input className="input" value={form.underlying_carrier} onChange={(e) => setField('underlying_carrier', e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Broker #</label>
-            <input className="input" value={form.broker_no} onChange={(e) => setField('broker_no', e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Trailer #</label>
-            <input className="input" value={form.trailer_no} onChange={(e) => setField('trailer_no', e.target.value)} />
-          </div>
-        </div>
-
-        {/* Shipper / Receiver */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <label className="label">Shipper</label>
-            <input className="input" value={form.shipper} onChange={(e) => setField('shipper', e.target.value)} placeholder="Name" />
-            <input className="input" value={form.shipper_address} onChange={(e) => setField('shipper_address', e.target.value)} placeholder="Address" />
-          </div>
-          <div className="space-y-2">
-            <label className="label">Receiver</label>
-            <input className="input" value={form.receiver} onChange={(e) => setField('receiver', e.target.value)} placeholder="Name" />
-            <input className="input" value={form.receiver_address} onChange={(e) => setField('receiver_address', e.target.value)} placeholder="Address" />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Point of Origin</label>
-            <input className="input" value={form.point_of_origin} onChange={(e) => setField('point_of_origin', e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Point of Destination</label>
-            <input className="input" value={form.point_of_destination} onChange={(e) => setField('point_of_destination', e.target.value)} />
-          </div>
-        </div>
-
-        {/* Equipment & Billing */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div>
-            <label className="label">Equipment Type</label>
-            <select className="input" value={form.equipment_type} onChange={(e) => setField('equipment_type', e.target.value)}>
-              <option value="">Select...</option>
-              <option>10-WHEELER</option>
-              <option>SUPER-10</option>
-              <option>STRONG ARM</option>
-              <option>SUPER TAG</option>
-              <option>TRANSFER</option>
-              <option>DBL BOTTOMS</option>
-              <option>SEMI-BOTTOM</option>
-              <option>END DUMP</option>
-              <option>SIDE DUMP</option>
-              <option>TRUCK & PUP</option>
-              <option>WATER TRUCK</option>
-              <option>FLAT BED</option>
-              <option>MIXER</option>
-              <option>SWEEPER</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Billing Method</label>
-            <select className="input" value={form.billing_method} onChange={(e) => setField('billing_method', e.target.value)}>
-              <option>PER LOAD</option>
-              <option>HOURLY</option>
-              <option>TONNAGE</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Rate $</label>
-            <input className="input" type="number" value={form.rate} onChange={(e) => setField('rate', e.target.value)} />
-          </div>
-          <div>
-            <label className="label">Total Charges $</label>
-            <input className="input font-bold" type="number" value={form.total_charges} onChange={(e) => setField('total_charges', e.target.value)} />
-          </div>
-        </div>
-
-        {/* Loads Table */}
         <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="label mb-0">Loads</label>
-            <button onClick={addLoad} className="text-sm text-blue-600 hover:underline">+ Add Row</button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border rounded">
-              <thead className="bg-gray-50">
-                <tr>
-                  {['#', 'Tag No.', 'Weight', 'Commodity', 'Load Arrive', 'Load Depart', 'Unload Arrive', 'Unload Depart', 'Standby', 'Breakdown/Reason', ''].map((h) => (
-                    <th key={h} className="px-2 py-2 text-left font-medium text-gray-600 border-b">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {loads.map((l, i) => (
-                  <tr key={i} className="border-b">
-                    <td className="px-2 py-1 text-gray-400">{i + 1}</td>
-                    {(['tag_no', 'weight', 'commodity', 'loading_arrive', 'loading_depart', 'unloading_arrive', 'unloading_depart', 'standby_time', 'breakdown_reason'] as const).map((k) => (
-                      <td key={k} className="px-1 py-1">
-                        <input
-                          className="w-full border rounded px-1 py-0.5 text-xs"
-                          value={(l as any)[k]}
-                          onChange={(e) => setLoad(i, k, e.target.value)}
-                        />
-                      </td>
-                    ))}
-                    <td className="px-1">
-                      <button onClick={() => removeLoad(i)} className="text-red-400 hover:text-red-600">×</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <label className="label">Truck #</label>
+          <input className="input" value={form.truck_no} onChange={(e) => set('truck_no', e.target.value)} />
         </div>
 
-        {/* Notes */}
         <div>
-          <label className="label">Notes</label>
-          <textarea className="input h-20 resize-none" value={form.notes} onChange={(e) => setField('notes', e.target.value)} />
+          <label className="label">Principal Carrier</label>
+          <select className="input" value={form.principal_carrier_name} onChange={(e) => set('principal_carrier_name', e.target.value)}>
+            <option value="">— Select carrier —</option>
+            {carriers.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+            <option value="__other__">Other (type below)</option>
+          </select>
+          {form.principal_carrier_name === '__other__' && (
+            <input className="input mt-2" placeholder="Type carrier name" onChange={(e) => set('principal_carrier_name', e.target.value)} />
+          )}
         </div>
 
-        {/* Actions */}
+        <div>
+          <label className="label">Shipper</label>
+          <input className="input" value={form.shipper} onChange={(e) => set('shipper', e.target.value)} />
+        </div>
+
+        <div>
+          <label className="label">Address</label>
+          <input className="input" value={form.shipper_address} onChange={(e) => set('shipper_address', e.target.value)} />
+        </div>
+
+        <div>
+          <label className="label">Material</label>
+          <select className="input" value={form.material} onChange={(e) => set('material', e.target.value)}>
+            {MATERIALS.map((m) => <option key={m}>{m}</option>)}
+            <option value="Other">Other / New material...</option>
+          </select>
+          {form.material === 'Other' && (
+            <input className="input mt-2" placeholder="Type material name" value={form.custom_material} onChange={(e) => set('custom_material', e.target.value)} />
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="label"># of Loads</label>
+            <input type="number" className="input" value={form.num_loads} onChange={(e) => set('num_loads', e.target.value)} min="1" />
+          </div>
+          <div>
+            <label className="label">Price per Load $</label>
+            <input type="number" className="input" value={form.rate} onChange={(e) => set('rate', e.target.value)} placeholder="0.00" />
+          </div>
+        </div>
+
+        {/* Calculated summary */}
+        <div className="bg-gray-50 rounded p-4 space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-600">Total ({numLoads} loads × ${rate.toFixed(2)})</span>
+            <span className="font-semibold">${total.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-gray-600">Commission</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                className="w-16 border rounded px-2 py-1 text-right text-sm"
+                value={form.commission_pct}
+                onChange={(e) => set('commission_pct', e.target.value)}
+              />
+              <span className="text-gray-500">%</span>
+              <span className="font-semibold text-red-600">-${commission.toFixed(2)}</span>
+            </div>
+          </div>
+          <div className="flex justify-between border-t pt-2 font-bold text-base">
+            <span>Net</span>
+            <span className="text-green-700">${net.toFixed(2)}</span>
+          </div>
+        </div>
+
+        {/* Attach BOL photo */}
+        <div>
+          <label className="label">Attach Physical BOL Photo</label>
+          <div
+            onClick={() => document.getElementById('bol-photo-input')?.click()}
+            className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center cursor-pointer hover:border-yellow-400 transition-colors"
+          >
+            {bolPhotoPreview ? (
+              <img src={bolPhotoPreview} alt="BOL" className="max-h-48 mx-auto rounded object-contain" />
+            ) : (
+              <div className="text-gray-400 text-sm">
+                <div className="text-2xl mb-1">📄</div>
+                Tap to take photo or choose from library
+              </div>
+            )}
+          </div>
+          <input id="bol-photo-input" type="file" accept="image/*" className="hidden" onChange={handleBolPhoto} />
+          {bolPhoto && <p className="text-xs text-green-600 mt-1">Photo ready — will be saved with this ticket</p>}
+        </div>
+
         <div className="flex gap-3 pt-2">
           <button
             onClick={() => handleSave('draft')}
             disabled={saving}
-            className="border border-gray-300 hover:bg-gray-50 px-6 py-2 rounded font-medium"
+            className="border border-gray-300 hover:bg-gray-50 px-5 py-2 rounded font-medium"
           >
             Save Draft
           </button>
           <button
             onClick={() => handleSave('submitted')}
             disabled={saving}
-            className="bg-yellow-500 hover:bg-yellow-600 text-black px-6 py-2 rounded font-semibold"
+            className="bg-yellow-500 hover:bg-yellow-600 text-black px-5 py-2 rounded font-semibold flex-1"
           >
             {saving ? 'Saving...' : 'Save & Submit'}
           </button>
