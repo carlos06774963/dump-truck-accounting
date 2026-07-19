@@ -177,7 +177,7 @@ export default function NewBolPage() {
         </div>
 
         <div>
-          <label className="label">Principal Carrier</label>
+          <label className="label">Customer <span className="text-gray-400 font-normal text-xs">principal carrier</span></label>
           <select className="input" value={form.principal_carrier_name} onChange={(e) => set('principal_carrier_name', e.target.value)}>
             <option value="">— Select carrier —</option>
             {carriers.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
