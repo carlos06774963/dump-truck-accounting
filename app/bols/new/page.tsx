@@ -42,6 +42,16 @@ export default function NewBolPage() {
   const net = total - commission
   const material = form.material === 'Other' ? form.custom_material : form.material
 
+  function toIsoDate(val: string): string {
+    if (!val) return ''
+    // already YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) return val
+    // MM/DD/YYYY → YYYY-MM-DD
+    const m = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+    if (m) return `${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`
+    return val
+  }
+
   async function handleScan(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -59,23 +69,23 @@ export default function NewBolPage() {
         body: JSON.stringify({ imageUrl: urlData.publicUrl }),
       })
       const data = await res.json()
-      supabase.storage.from('photoscanning').remove([path])
-      if (data.error) { alert('Scan failed: ' + data.error); setScanning(false); return }
+      supabase.storage.from('photoscanning').remove([path]).catch(() => {})
+      if (data.error) { setScanning(false); return }
+      const loads = Array.isArray(data.loads) ? data.loads.length : (typeof data.loads === 'number' ? data.loads : null)
       setForm((f: any) => ({
         ...f,
         bill_no: data.bill_no || f.bill_no,
-        date: data.date || f.date,
+        date: toIsoDate(data.date) || f.date,
         truck_no: data.truck_no || f.truck_no,
         principal_carrier_name: data.principal_carrier_name || f.principal_carrier_name,
         shipper: data.shipper || f.shipper,
         shipper_address: data.shipper_address || f.shipper_address,
         rate: data.rate ? String(data.rate) : f.rate,
-        num_loads: data.loads?.length ? String(data.loads.length) : f.num_loads,
+        num_loads: loads ? String(loads) : f.num_loads,
       }))
       setScanning(false)
-    } catch (e) {
+    } catch (err) {
       setScanning(false)
-      alert('Failed to scan image.')
     }
   }
 
